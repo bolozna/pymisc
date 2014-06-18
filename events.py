@@ -1,3 +1,5 @@
+import scipy.stats
+import random
 
 class KaplanMeierEstimator(object):
     def __init__(self):
@@ -83,9 +85,23 @@ class KaplanMeierEstimator(object):
         return Ti,Si
 
 class IntereventTimeEstimator(KaplanMeierEstimator):
-    def __init__(self,endTime):
+    def __init__(self,endTime,mode='censorlast'):
+        """ Constructor.
+        
+        Parameters
+        ----------
+        endTime : float
+           The last time point in the observation period
+        mode : string
+           'censorlast' : the last iet is censored when the observation period ends
+           'censorall' : in addition to the last iet, the first one is censored
+           'periodic' : periodic boundary conditions
+        
+        """
         super(IntereventTimeEstimator, self).__init__()
         self.endTime=endTime
+        assert mode in ["censorlast","censorall","periodic"]
+        self.mode=mode
 
     def add_time_seq(self,seq):
         for i,time in enumerate(seq):
@@ -93,8 +109,17 @@ class IntereventTimeEstimator(KaplanMeierEstimator):
                 dt=time-last
                 assert dt>=0
                 self.add_event(dt)
+                if self.mode=='censorall':
+                    self.add_event(dt)
+            elif self.mode=='censorall':
+                self.add_censored(time)                                  
+            elif self.mode=='periodic':
+                firstTime=time
             last=time
-        self.add_censored(self.endTime-last)
+        if self.mode=='periodic':
+            self.add_event(firstTime+self.endTime-last)
+        else:
+            self.add_censored(self.endTime-last)
 
     def add_time_duration_seq(self,seq):
         for i,(time,duration) in enumerate(seq):
@@ -102,13 +127,24 @@ class IntereventTimeEstimator(KaplanMeierEstimator):
                 dt=time-last
                 assert dt>=0
                 self.add_event(dt)
+                if self.mode=='censorall':
+                    self.add_event(dt)
+            elif self.mode=='censorall':
+                self.add_censored(time)                                  
+            elif self.mode=='periodic':
+                firstTime=time
             last=time+duration
-        self.add_censored(self.endTime-last)
+        if self.mode=='periodic':
+            self.add_event(firstTime+self.endTime-last)
+        else:
+            self.add_censored(self.endTime-last)
 
 
-def edgestotimeseqs(edges):
+def edgestotimeseqs(edges, issorted=True):
     """Generator transforming edges to time sequences.
     """
+    if not issorted:
+        edges=sorted(edges)
     current=None
     for event in edges:
         if (event[0],event[1]) != current:
@@ -121,6 +157,11 @@ def edgestotimeseqs(edges):
     l.sort()
     yield l
 
+
+def iets(events):
+    """Generator for inter-event times.
+    """
+    pass
 
 def normalize(events,form="timeseqs"):
     """Normalizes times in an event list in place.
@@ -157,6 +198,103 @@ def normalize(events,form="timeseqs"):
 
     return maxt-mint
 
+
+def random_timeseq(tdist,trdist,endtime,starttime=0):
+    """ Generate a random time sequence.
+
+    Parameters
+    ----------
+    tdist : function
+      A function returning realizations from the inter-event time distribution
+    trdist : function
+      A function returning realizations from the residual waiting time distribution
+    endtime : float
+      The end time of the observation period
+    starttime : float
+      The start time of the observation period
+
+    Returns
+    -------
+    A sequence of times of the events.
+    """
+    l=[]
+    t1=trdist()
+    if t1+starttime>endtime:
+        return l
+    else:
+        l.append(t1+starttime)
+    while True:
+        ti=tdist()
+        if l[-1]+ti>endtime:
+            break
+        l.append(l[-1]+ti)
+
+    return l
+
+def random_timeseq_burnin(tdist,endtime,starttime=0,burninfactor=10):
+    t=0
+    dt=endtime-starttime
+    bt=dt*burninfactor
+    l=[]
+    while True:
+        ti=tdist()
+        t=t+ti
+        if t>bt:
+            if starttime+t-bt > endtime:
+                return l
+            l.append(starttime+t-bt)
+            break
+    while True:
+        ti=tdist()
+        if l[-1]+ti>endtime:
+            break
+        l.append(l[-1]+ti)
+
+    return l
+
+def random_timeseq_exp(rate,starttime,endtime):
+    return random_timeseq(lambda :scipy.stats.expon.rvs(rate),lambda :scipy.stats.expon.rvs(rate),endtime,starttime)
+
+def plaw(exp,mint=1.):
+    """Generate a value from power-law distribution.
+
+    Probability density is:
+    p(\tau) = 0, when \tau < \tau_m
+    p(\tau) = (\alpha - 1) \tau_m^{\alpha - 1} \tau^{-\alpha}, \tau > \tau_m    
+    """
+    p=random.random()
+    return mint * (1. - p)**(1./float(1.-exp))
+
+def plaw_residual(exp,mint=1.):
+    """Generate a value from the distribution of the residual of power-law iet.
+
+    Probability density is:
+    p(\tau_R) = \frac{\alpha - 2}{\alpha - 1} \tau_m^{-1}, when \tau_R < \tau_m
+    and
+    p(\tau_R) = \frac{\alpha - 2}{\alpha - 1} \tau_m^{\alpha - 2} * \tau_R^{1-\alpha}, when \tau_R > \tau_m
+
+    Cumulative probability distribution is:
+    P(\tau_R) = \frac{\alpha - 2}{\alpha -1} \tau_m^{-1} \tau_R, when \tau_R < \tau_m
+    and
+    P(\tau_R) = 1 - \frac{\tau_m^{\alpha - 2}}{\alpha - 1} \tau_R^{2 - \alpha}, when \tau_R > \tau_m
+    
+    Inverse cumulative probability distribution:
+    P^{-1}(p) = \frac{\alpha - 1}{\alpha - 2} \tau_m p, when p < \frac{\alpha - 2}{\alpha - 1}
+    and
+    P^{-1}(p) = \tau_m ((\alpha - 1)(1-p))^{frac{1}{2 - \alpha}}, when p < \frac{\alpha - 2}{\alpha - 1}
+    """
+    p=random.random()
+    if p < float(exp - 2.)/float(exp - 1.):
+        return float(exp-1.)/float(exp-2.)*mint*p
+    else:
+        return mint*((exp -1.)*(1.-p))**(1./float(2.-exp))
+
+def random_timeseq_plaw(exp,mint,endtime,starttime=0,burnin=None):
+    #lambda :scipy.stats.pareto.rvs(exp)
+    if burnin==None:
+        return random_timeseq(lambda :plaw(exp,mint),lambda :plaw_residual(exp,mint),endtime,starttime)
+    else:
+        return random_timeseq_burnin(lambda :plaw(exp,mint),endtime,starttime,burninfactor=burnin)
 
 
 
