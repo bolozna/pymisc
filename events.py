@@ -104,41 +104,45 @@ class IntereventTimeEstimator(KaplanMeierEstimator):
         self.mode=mode
 
     def add_time_seq(self,seq):
-        for i,time in enumerate(seq):
-            if i!=0:
-                dt=time-last
-                assert dt>=0
-                self.add_event(dt)
-                if self.mode=='censorall':
+        if len(seq)!=0:
+            for i,time in enumerate(seq):
+                if i!=0:
+                    dt=time-last
+                    assert dt>=0
                     self.add_event(dt)
-            elif self.mode=='censorall':
-                self.add_censored(time)                                  
-            elif self.mode=='periodic':
-                firstTime=time
-            last=time
-        if self.mode=='periodic':
-            self.add_event(firstTime+self.endTime-last)
-        else:
-            self.add_censored(self.endTime-last)
+                    if self.mode=='censorall':
+                        self.add_event(dt)
+                elif self.mode=='censorall':
+                    self.add_censored(time)                                  
+                elif self.mode=='periodic':
+                    firstTime=time
+                last=time
+            if self.mode=='periodic':
+                self.add_event(firstTime+self.endTime-last)
+            else:
+                self.add_censored(self.endTime-last)
+
 
     def add_time_duration_seq(self,seq):
-        for i,(time,duration) in enumerate(seq):
-            if i!=0:
-                dt=time-last
-                assert dt>=0
-                self.add_event(dt)
-                if self.mode=='censorall':
+        if len(seq)!=0:
+            for i,(time,duration) in enumerate(seq):
+                if i!=0:
+                    dt=time-last
+                    assert dt>=0
                     self.add_event(dt)
-            elif self.mode=='censorall':
-                self.add_censored(time)                                  
-            elif self.mode=='periodic':
-                firstTime=time
-            last=time+duration
-        if self.mode=='periodic':
-            self.add_event(firstTime+self.endTime-last)
-        else:
-            self.add_censored(self.endTime-last)
-
+                    if self.mode=='censorall':
+                        self.add_event(dt)
+                elif self.mode=='censorall':
+                    self.add_censored(time)                                  
+                elif self.mode=='periodic':
+                    firstTime=time
+                last=time+duration
+            if self.mode=='periodic':
+                self.add_event(firstTime+self.endTime-last)
+            else:
+                self.add_censored(self.endTime-last)
+                if self.mode=='censorall':
+                    self.add_censored(self.endTime-last)
 
 def edgestotimeseqs(edges, issorted=True):
     """Generator transforming edges to time sequences.
