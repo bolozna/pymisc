@@ -1,5 +1,6 @@
 import scipy.stats
 import random
+import math
 
 class KaplanMeierEstimator(object):
     def __init__(self):
@@ -165,7 +166,10 @@ def edgestotimeseqs(edges, issorted=True):
 def iets(events):
     """Generator for inter-event times.
     """
-    pass
+    for i,event in enumerate(events):
+        if i!=0:
+            yield event-lastevent
+        lastevent=event
 
 def normalize(events,form="timeseqs"):
     """Normalizes times in an event list in place.
@@ -256,8 +260,21 @@ def random_timeseq_burnin(tdist,endtime,starttime=0,burninfactor=10):
 
     return l
 
+def random_timeseq_empirical(tdist_cum,trdist_cum,T):
+    """Returns a random inter-even time distribution given cumulative distributions of 
+    inter-event times and residual inter-event times. If the cumulative distribution of 
+    inter-event times doesn't go to one all the rest are assumed to be larger than T.
+    """
+    pass
+
+
+def exprv(rate):
+    p=random.random()
+    return -math.log(p)/float(rate)
+
 def random_timeseq_exp(rate,starttime,endtime):
-    return random_timeseq(lambda :scipy.stats.expon.rvs(rate),lambda :scipy.stats.expon.rvs(rate),endtime,starttime)
+    #return random_timeseq(lambda :scipy.stats.expon.rvs(rate),lambda :scipy.stats.expon.rvs(rate),endtime,starttime)
+    return random_timeseq(lambda :exprv(rate),lambda :exprv(rate),endtime,starttime)
 
 def plaw(exp,mint=1.):
     """Generate a value from power-law distribution.
