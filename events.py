@@ -62,6 +62,22 @@ class KaplanMeierEstimator(object):
 
         return Ti,Si
 
+    def _get_naive_estimator(self):
+        """For testing."""
+        t_list=sorted(self.event_times.keys())
+
+        events_cum,events_sum=[],0
+        for t in t_list:
+            events_sum+=self.event_times[t]#*(self.endTime/float(self.endTime-t))
+            events_cum.append(events_sum)
+            
+        ts,ns=[0],[1]
+        for t,n in zip(t_list,events_cum):
+            ts.append(t)
+            ns.append(1-n/float(events_sum))
+        return ts,ns
+
+
     def get_naive_estimator(self):
         """Returns an estimator where the sensored events are simply discarded.
         """
@@ -144,6 +160,32 @@ class IntereventTimeEstimator(KaplanMeierEstimator):
                 self.add_censored(self.endTime-last)
                 if self.mode=='censorall':
                     self.add_censored(self.endTime-last)
+
+
+    def get_length_bias_estimator(self):
+        """Returns an estimator correcting for the length bias of windows cencored data. 
+
+        This estimator only takes into account the non-censored data. For the non-censored
+        data the data points are distributed as p'(\tau) \sim (T-t)p(\tau), where p'(\tau)
+        is the observed distribution of the inter-event times (i.e., the uncensored 
+        distribution), p(\tau) is the original unobserved distribution which produced the
+        underlying event sequence, and T is the time window length.
+        """
+        t_list=sorted(self.event_times.keys())
+
+        events_cum,events_sum=[],0
+        for t in t_list:
+            events_sum+=self.event_times[t]*(self.endTime/float(self.endTime-t))
+            events_cum.append(events_sum)
+
+        #t_list,events_cum,censored_cum=self.get_cumulative()
+
+        ts,ns=[0],[1]
+        for t,n in zip(t_list,events_cum):
+            ts.append(t)
+            ns.append(1-n/float(events_sum))
+        return ts,ns
+
 
 def edgestotimeseqs(edges, issorted=True):
     """Generator transforming edges to time sequences.
@@ -328,3 +370,10 @@ if __name__=="__main__":
     t,s=km.get_estimator()
     print t
     print s
+
+
+    tn,sn=km.get_naive_estimator()
+    print tn
+    print sn
+
+    print km._get_naive_estimator()
