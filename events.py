@@ -3,9 +3,15 @@ import random
 import math
 
 class KaplanMeierEstimator(object):
-    def __init__(self):
-        self.censor_times={}
-        self.event_times={}
+    def __init__(self,censored_times=None,event_times=None):
+        if censored_times==None:
+            self.censor_times={}
+        else:
+            self.censor_times=censored_times
+        if event_times==None:
+            self.event_times={}
+        else:
+            self.event_times=event_times
 
     def add_event(self, time, count=1):        
         self.event_times[time]=self.event_times.get(time,0)+count
@@ -101,7 +107,7 @@ class KaplanMeierEstimator(object):
 
         return Ti,Si
 
-class IntereventTimeEstimator(KaplanMeierEstimator):
+class IntereventTimeEstimator(object):
     def __init__(self,endTime,mode='censorlast'):
         """ Constructor.
         
@@ -115,10 +121,14 @@ class IntereventTimeEstimator(KaplanMeierEstimator):
            'periodic' : periodic boundary conditions
         
         """
-        super(IntereventTimeEstimator, self).__init__()
+        #super(IntereventTimeEstimator, self).__init__()
         self.endTime=endTime
         assert mode in ["censorlast","censorall","periodic"]
         self.mode=mode
+
+        self.observed_iets={}
+        self.forward_censored_iets={}
+        self.backward_censored_iets={}
 
     def add_time_seq(self,seq):
         if len(seq)!=0:
@@ -126,20 +136,20 @@ class IntereventTimeEstimator(KaplanMeierEstimator):
                 if i!=0:
                     dt=time-last
                     assert dt>=0
-                    self.add_event(dt)
-                    if self.mode=='censorall':
-                        self.add_event(dt)
+                    self.observed_iets[dt]=self.observed_iets.get(dt,0)+1
                 elif self.mode=='censorall':
-                    self.add_censored(time)                                  
+                    self.backward_censored_iets[time]=self.backward_censored_iets.get(time,0)+1
                 elif self.mode=='periodic':
                     firstTime=time
                 last=time
             if self.mode=='periodic':
-                self.add_event(firstTime+self.endTime-last)
+                dt=firstTime+self.endTime-last
+                self.observed_iets[dt]=self.observed_iets.get(dt,0)+1
             else:
-                self.add_censored(self.endTime-last)
+                dt=self.endTime-last
+                self.forward_censored_iets[dt]=self.forward_censored_iets.get(dt,0)+1
 
-
+    """                
     def add_time_duration_seq(self,seq):
         if len(seq)!=0:
             for i,(time,duration) in enumerate(seq):
@@ -160,6 +170,24 @@ class IntereventTimeEstimator(KaplanMeierEstimator):
                 self.add_censored(self.endTime-last)
                 if self.mode=='censorall':
                     self.add_censored(self.endTime-last)
+    """
+
+    def get_estimator(self):
+        if self.mode=='periodic':
+            censored_times=None
+        elif self.mode=='censorlast':
+            censored_times=self.forward_censored_iets
+        elif self.mode=='censorall':
+            censored_times=self.backward_censored_iets.copy()
+            for key,val in self.forward_censored_iets.iteritems():
+                censored_times[key]=censored_times.get(key,0)+val
+
+        km_estimator=KaplanMeierEstimator(censored_times=censored_times,event_times=self.observed_iets)
+        return km_estimator.get_estimator()
+
+    def get_naive_estimator(self):
+        km_estimator=KaplanMeierEstimator(event_times=self.observed_iets)
+        return km_estimator.get_naive_estimator()
 
 
     def get_length_bias_estimator(self):
@@ -377,3 +405,13 @@ if __name__=="__main__":
     print sn
 
     print km._get_naive_estimator()
+
+
+    for mode in ['censorlast','censorall','periodic']:
+        iet_est=IntereventTimeEstimator(12,mode=mode)
+        iet_est.add_time_seq([3,4,5,9])
+        print mode,
+        print ": ",
+        print iet_est.get_naive_estimator(),
+        print ", ",
+        print iet_est.get_estimator()
