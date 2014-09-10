@@ -1,6 +1,8 @@
 import scipy.stats
+import scipy.optimize
 import random
 import math
+import itertools
 
 class KaplanMeierEstimator(object):
     def __init__(self,censored_times=None,event_times=None):
@@ -129,6 +131,7 @@ class IntereventTimeEstimator(object):
         self.observed_iets={}
         self.forward_censored_iets={}
         self.backward_censored_iets={}
+        self.empty_seqs=0
 
     def add_time_seq(self,seq):
         if len(seq)!=0:
@@ -148,6 +151,8 @@ class IntereventTimeEstimator(object):
             else:
                 dt=self.endTime-last
                 self.forward_censored_iets[dt]=self.forward_censored_iets.get(dt,0)+1
+        else:
+            self.empty_seqs+=1
 
     """                
     def add_time_duration_seq(self,seq):
@@ -175,14 +180,19 @@ class IntereventTimeEstimator(object):
     def get_estimator(self):
         if self.mode=='periodic':
             censored_times=None
+            event_times=self.observed_iets
         elif self.mode=='censorlast':
             censored_times=self.forward_censored_iets
+            event_times=self.observed_iets
         elif self.mode=='censorall':
             censored_times=self.backward_censored_iets.copy()
             for key,val in self.forward_censored_iets.iteritems():
                 censored_times[key]=censored_times.get(key,0)+val
+            event_times=self.observed_iets.copy()
+            for key,val in self.observed_iets.iteritems():
+                event_times[key]=event_times[key]*2
 
-        km_estimator=KaplanMeierEstimator(censored_times=censored_times,event_times=self.observed_iets)
+        km_estimator=KaplanMeierEstimator(censored_times=censored_times,event_times=event_times)
         return km_estimator.get_estimator()
 
     def get_naive_estimator(self):
@@ -199,11 +209,11 @@ class IntereventTimeEstimator(object):
         distribution), p(\tau) is the original unobserved distribution which produced the
         underlying event sequence, and T is the time window length.
         """
-        t_list=sorted(self.event_times.keys())
+        t_list=sorted(self.observed_iets.keys())
 
         events_cum,events_sum=[],0
         for t in t_list:
-            events_sum+=self.event_times[t]*(self.endTime/float(self.endTime-t))
+            events_sum+=self.observed_iets[t]*(self.endTime/float(self.endTime-t))
             events_cum.append(events_sum)
 
         #t_list,events_cum,censored_cum=self.get_cumulative()
@@ -214,6 +224,124 @@ class IntereventTimeEstimator(object):
             ns.append(1-n/float(events_sum))
         return ts,ns
 
+    """
+    def get_vardi_estimator(self):
+        assert self.mode=="censorall"
+        #setup
+        nx=sum(self.observed_iets.itervalues())
+        ny=sum(self.backward_censored_iets.itervalues())
+        nz=sum(self.forward_censored_iets.itervalues())
+        nw=self.empty_seqs
+        ts=list(set(itertools.chain(self.observed_iets.iterkeys(),self.forward_censored_iets.iterkeys(),self.backward_censored_iets.iterkeys())))
+        ts.append(self.endTime)
+        ts.append(self.endTime+1)
+        ts.sort()
+        
+        #step a
+        p_old=[1./float(len(ts)) for key in ts]
+        #sum_p_old=1.
+
+        while True:
+            #step b
+            r=[]
+            sumi=0
+            for k in range(len(ts)):
+                t=ts[k]
+                sum_p_old=sum(map(lambda j:p_old[j],range(k,len(ts))))
+                sumi=sumi+(self.forward_censored_iets.get(t,0)+self.backward_censored_iets.get(t,0))/float(sum_p_old)
+                r.append(self.observed_iets.get(t,0)+p_old[k]*sumi/float(sum_p_old))
+            r.append(p_old[-1]*(sumi+nw/float(p_old[-1]  )))
+
+            f=lambda mu:sum( (r[k]*ts[k]/float((nx+nz)*mu+(ny+nw)*ts[k]) for k in range(len(ts))) )-1
+            #mu_new=scipy.optimize.newton(f,ts[-1],tol=10**-10)
+            #mu_new=scipy.optimize.ridder(f,0,ts[-1])
+            mu_new=scipy.optimize.bisect(f,ts[0],ts[-1])
+            
+            #step c
+            p_new=[]
+            for k,t in enumerate(ts):
+                p_new.append(r[k]*mu_new/float((nx+nz)*mu_new+(ny+nw)*t ))
+
+            #step d
+            if sum(map(lambda x,y:abs(x-y),p_old,p_new))>10**-6:
+                p_old=p_new
+                #sum_p_old=sum(p_old)
+            else:
+                cump=[1]
+                if ts[0]!=0:
+                    ts.insert(0,0)
+                for pval in p_new:
+                    cump.append(cump[-1]-pval)
+                print mu_new
+                return ts,cump
+    """
+
+
+    def get_npmle_estimator(self):
+        """Modified RT algorithm by Soon et al. (1996)
+        """
+        assert self.mode=="censorall"
+        #setup
+        nx=sum(self.observed_iets.itervalues())
+        ny=sum(self.backward_censored_iets.itervalues())
+        nz=sum(self.forward_censored_iets.itervalues())
+        nw=self.empty_seqs
+        ts=list(set(itertools.chain(self.observed_iets.iterkeys(),self.forward_censored_iets.iterkeys(),self.backward_censored_iets.iterkeys())))
+        if nw!=0:
+            ts.append(self.endTime)
+        ts.sort()
+        
+        #step a
+        p_old=[1./float(len(ts)) for key in ts]
+        #sum_p_old=1.
+        v_old=nw/float(ny+nw)
+
+        while True:
+            #step b
+            r=[]
+            sumi=0
+            sum_p_old=sum(map(lambda j:p_old[j],range(len(ts))))
+            for k in range(len(ts)-1):
+                t=ts[k]
+                sum_p_old-=p_old[k-1] if k>0 else 0.
+                sumi=sumi+(self.forward_censored_iets.get(t,0)+self.backward_censored_iets.get(t,0))/float(sum_p_old)
+                #sumi=0.
+                #for i in range(k):
+                #    sum_p_old=sum(map(lambda j:p_old[j],range(i,len(ts))))
+                #    sumi+=(self.forward_censored_iets.get(ts[i],0)+self.backward_censored_iets.get(ts[i],0))/float(sum_p_old)
+                r.append(self.observed_iets.get(t,0)+p_old[k]*sumi)
+                
+            r.append(p_old[-1]*sumi)
+
+            if v_old!=0:
+                rh1=v_old*nw/float(v_old )
+            else:
+                rh1=0
+
+            f=lambda mu:sum( (r[k]*ts[k]/float((nx+nz)*mu+(ny+nw)*ts[k]) for k in range(len(ts))) )-1+rh1/float(ny+nw)
+            #mu_new=scipy.optimize.newton(f,ts[-1],tol=10**-10)
+            #mu_new=scipy.optimize.ridder(f,0,ts[-1])
+            mu_new=scipy.optimize.bisect(f,ts[0],100*ts[-1])
+            
+            #step c
+            p_new=[]
+            for k,t in enumerate(ts):
+                p_new.append(r[k]*mu_new/float((nx+nz)*mu_new+(ny+nw)*t ))
+            v_new=rh1*mu_new/float(ny+nw)
+
+            #step d
+            if sum(map(lambda x,y:abs(x-y),p_old,p_new))>10**-4:
+                #print sum(map(lambda x,y:abs(x-y),p_old,p_new)),sum(r),rh1,nx+nz,ny+nw,sum_p_old
+                p_old=p_new
+                v_old=v_new
+            else:
+                cump=[1]
+                if ts[0]!=0:
+                    ts.insert(0,0)
+                for pval in p_new:
+                    cump.append(cump[-1]-pval)
+                print mu_new
+                return ts,cump
 
 def edgestotimeseqs(edges, issorted=True):
     """Generator transforming edges to time sequences.
@@ -415,3 +543,8 @@ if __name__=="__main__":
         print iet_est.get_naive_estimator(),
         print ", ",
         print iet_est.get_estimator()
+
+    iet_est=IntereventTimeEstimator(12,mode='censorall')
+    iet_est.add_time_seq([3,4,5,9])
+    print iet_est.get_npmle_estimator()
+    print iet_est.get_length_bias_estimator()
