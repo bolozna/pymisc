@@ -277,7 +277,7 @@ class IntereventTimeEstimator(object):
     """
 
 
-    def get_npmle_estimator(self):
+    def get_npmle_estimator(self,return_mu=False):
         """Modified RT algorithm by Soon et al. (1996)
         """
         assert self.mode=="censorall"
@@ -305,10 +305,12 @@ class IntereventTimeEstimator(object):
                 t=ts[k]
                 sum_p_old-=p_old[k-1] if k>0 else 0.
                 sumi=sumi+(self.forward_censored_iets.get(t,0)+self.backward_censored_iets.get(t,0))/float(sum_p_old)
+
                 #sumi=0.
                 #for i in range(k):
                 #    sum_p_old=sum(map(lambda j:p_old[j],range(i,len(ts))))
                 #    sumi+=(self.forward_censored_iets.get(ts[i],0)+self.backward_censored_iets.get(ts[i],0))/float(sum_p_old)
+
                 r.append(self.observed_iets.get(t,0)+p_old[k]*sumi)
                 
             r.append(p_old[-1]*sumi)
@@ -321,7 +323,8 @@ class IntereventTimeEstimator(object):
             f=lambda mu:sum( (r[k]*ts[k]/float((nx+nz)*mu+(ny+nw)*ts[k]) for k in range(len(ts))) )-1+rh1/float(ny+nw)
             #mu_new=scipy.optimize.newton(f,ts[-1],tol=10**-10)
             #mu_new=scipy.optimize.ridder(f,0,ts[-1])
-            mu_new=scipy.optimize.bisect(f,ts[0],100*ts[-1])
+            #mu_new=scipy.optimize.bisect(f,ts[0],100*ts[-1])
+            mu_new=scipy.optimize.bisect(f,0,100*ts[-1])
             
             #step c
             p_new=[]
@@ -335,13 +338,18 @@ class IntereventTimeEstimator(object):
                 p_old=p_new
                 v_old=v_new
             else:
+                #print mu_new,v_new
+                #print ts,p_new
                 cump=[1]
                 if ts[0]!=0:
                     ts.insert(0,0)
                 for pval in p_new:
                     cump.append(cump[-1]-pval)
-                print mu_new
-                return ts,cump
+                if return_mu:
+                    return ts,cump,mu_new
+                else:
+                    return ts,cump
+
 
 def edgestotimeseqs(edges, issorted=True):
     """Generator transforming edges to time sequences.
