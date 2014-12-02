@@ -3,6 +3,7 @@ import scipy.optimize
 import random
 import math
 import itertools
+import dists
 
 class KaplanMeierEstimator(object):
     def __init__(self,censored_times=None,event_times=None):
@@ -132,8 +133,10 @@ class IntereventTimeEstimator(object):
         self.forward_censored_iets={}
         self.backward_censored_iets={}
         self.empty_seqs=0
+        self.nseqs=0
 
     def add_time_seq(self,seq):
+        self.nseqs+=1
         if len(seq)!=0:
             for i,time in enumerate(seq):
                 if i!=0:
@@ -153,6 +156,14 @@ class IntereventTimeEstimator(object):
                 self.forward_censored_iets[dt]=self.forward_censored_iets.get(dt,0)+1
         else:
             self.empty_seqs+=1
+
+    def read_seqs(self,filename):
+        """Reads a file containing event sequences.
+        """
+        f=open(filename,'r')
+        for line in f:
+            seq=map(float,line.split())
+            self.add_time_seq(seq)
 
     """                
     def add_time_duration_seq(self,seq):
@@ -351,6 +362,111 @@ class IntereventTimeEstimator(object):
                     return ts,cump
 
 
+    def estimate_moment(self,moment,method="naive"):
+        """Returns an estimate for a moment of the inter-event time distribution.
+
+        Choose one of the following methods.
+        'naive' : Moment of the observed inter-event time distribution
+        'lowerbound' : Moment of a distribution where one has the observed inter-event 
+        times, the censored inter-event times and time window widths equal to the number
+        of empty time sequences.
+        """ 
+        s,n=0,0
+        if method=="naive":
+            for iet,num in self.observed_iets.iteritems():
+                s+=num*(iet**moment)
+                n+=num
+            if n!=0:
+                return s/float(n)
+            else:
+                return None
+        elif method=="lowerbound":
+            assert self.mode in ["censorall","censorlast"]
+            mult=2 if self.mode == "censorall" else 1
+            for iet,num in self.observed_iets.iteritems():
+                s+=mult*num*(iet**moment)
+                n+=mult*num
+            for iet,num in itertools.chain(self.forward_censored_iets.iteritems(),self.backward_censored_iets.iteritems()):
+                s+=num*(iet**moment)
+                n+=num
+            s+=self.empty_seqs*(self.endTime**moment)
+            n+=self.empty_seqs
+            return s/float(n)
+        elif method=="lbias":
+            for iet,num in self.observed_iets.iteritems():
+                s+=num/(1-iet/float(self.endTime))*(iet**moment)
+                n+=num/(1-iet/float(self.endTime))
+            if n!=0:
+                return s/float(n)
+            else:
+                return None
+        elif method=="lbias_lbound":
+            s2,n2=0,0
+            assert self.mode in ["censorall","censorlast"]
+            mult=2 if self.mode == "censorall" else 1
+            for iet,num in self.observed_iets.iteritems():
+                s+=2*num/(1-iet/float(self.endTime))*(iet**moment)
+                n+=2*num/(1-iet/float(self.endTime))
+            for iet,num in itertools.chain(self.forward_censored_iets.iteritems(),self.backward_censored_iets.iteritems()):
+                s2+=num*(iet**moment)
+                n2+=num
+            s2+=self.empty_seqs*(self.endTime**moment)
+            n2+=self.empty_seqs
+            if n!=0:
+                lbias= s/float(n)
+                p_lbias=n/float(n+n2)
+            else:
+                lbias= 0
+                p_lbias=0
+            lbound=s2/float(n2)
+            p_lbound=n2/float(n+n2)
+            return lbias*p_lbias+lbound*p_lbound
+        elif method=="poisson":
+            if len(self.observed_iets)!=0:
+                rate=len(self.observed_iets)/float(self.endTime*self.nseqs)
+            else:
+                rate=1./float(self.endTime*self.nseqs)
+            return math.factorial(moment)/float(rate**moment)
+        elif method=="npmle":
+            if len(self.observed_iets)!=0:
+                ts,ps=self.get_npmle_estimator()
+                cd=dists.CumDist(ts,ps,maxval=self.endTime)
+                return cd.get_moment(moment)
+            else:
+                return self.endTime
+        elif method=="npmle_mod":
+            if len(self.observed_iets)>1:
+                ts,ps=self.get_npmle_estimator()
+                cd=dists.CumDist(ts,ps,maxval=ts[-1])
+                #cd.ps[-1]=0
+                return cd.get_moment(moment)
+            elif len(self.observed_iets)==0:
+                return None #self.endTime**moment
+            elif len(self.observed_iets)==1:
+                return None #(self.endTime/2.)**moment
+        elif method=="km":
+            if len(self.observed_iets)!=0:
+                ts,ps=self.get_estimator()
+                cd=dists.CumDist(ts,ps,maxval=self.endTime)
+                return cd.get_moment(moment)
+            else:
+                return self.endTime
+        elif method=="km_mod":
+            niets=sum(self.observed_iets.itervalues())
+            if niets>1 :
+                ts,ps=self.get_estimator()
+                cd=dists.CumDist(ts,ps,maxval=ts[-1])
+                #cd.ps[-1]=0
+                return cd.get_moment(moment)
+            elif niets==0:
+                return self.endTime**moment
+            elif niets==1:
+                return (self.endTime/2.)**moment
+
+        else:
+            raise Exception("Invalid parameter value for 'method': "+method)
+
+
 def edgestotimeseqs(edges, issorted=True):
     """Generator transforming edges to time sequences.
     """
@@ -523,6 +639,23 @@ def random_timeseq_plaw(exp,mint,endtime,starttime=0,burnin=None):
     else:
         return random_timeseq_burnin(lambda :plaw(exp,mint),endtime,starttime,burninfactor=burnin)
 
+def create_scaled_sequence(uldist,uldist_residual,avgdist,n,T):
+    """Create time sequences that follow an underlying distribution.
+    """
+    for i in range(n):
+        navg=avgdist()
+        ndist=lambda :navg*uldist()
+        ndist_residual=lambda :navg*uldist_residual()
+        yield random_timeseq(ndist,ndist_residual,T,0)
+
+def get_burstiness(m1,m2):
+    if m1==0:
+        return None
+    if abs(m2-m1*m1)<max(m2,m1*m1)/10**6:
+        s=0
+    else:
+        s=math.sqrt(m2-m1*m1)
+    return (s-m1)/float(s+m1)
 
 
 if __name__=="__main__":
