@@ -45,17 +45,22 @@ class KaplanMeierEstimator(object):
         return t_list,events_cum,censored_cum
         
 
-    def get_estimator(self):
+    def get_estimator(self,variance=False,correctionFactor=1.0):
         """Returns the Kaplan-Meier estimator as tuple (t,s).
 
         t : an ordered array of times
         s : the estimator value at each time
+        v : Variance of the estimator (Greenwood's formula)
         """
         t_list,events_cum,censored_cum=self.get_cumulative()
 
         ndts=events_cum[-1]+censored_cum[-1]
         Si=[1]
         Ti=[0]
+
+        Vmod=0
+        Vi=[1*Vmod]
+
         for i,t in enumerate(t_list):
             if i==0:
                 ni=ndts
@@ -67,9 +72,37 @@ class KaplanMeierEstimator(object):
                     Ti.append(t)
                     si=(ni-di)/float(ni)
                     Si_prev= Si[-1] if len(Si)>0 else 1
-                    Si.append(Si_prev*si)                
+                    Si.append(Si_prev*si)
+                    if (ni-di)!=0:
+                        Vmod+=di/float(ni*(ni-di))
+                        Vi.append(correctionFactor*Si[-1]**2 * Vmod)
+                    else:
+                        Vi.append(None)
 
-        return Ti,Si
+        if variance:
+            return Ti,Si,Vi
+        else:
+            return Ti,Si
+
+    @staticmethod
+    def get_confidence_intervals(Si,Vi,confLevel,logcorrect=False,correctionFactor=1.0):
+        assert len(Si)==len(Vi)
+        Si_up=[1]
+        Si_down=[1]
+        z=scipy.stats.norm.ppf(1-(1.-confLevel)/2.)
+        if logcorrect:
+            def loginv(w):
+                return math.exp(w)/float(1+math.exp(w))
+            for i in range(1,len(Si)):
+                w=math.log(Si[i]/(1.0-Si[i]))
+                wvar=(1./float(Si[i]*(1-Si[i])))**2*correctionFactor*Vi[i]
+                Si_up.append(loginv(w+z*math.sqrt(wvar)))
+                Si_down.append(loginv(w-z*math.sqrt(wvar)))
+        else:
+            for i in range(1,len(Si)):
+                Si_up.append(Si[i]+z*math.sqrt(correctionFactor*Vi[i]))
+                Si_down.append(Si[i]-z*math.sqrt(correctionFactor*Vi[i]))
+        return Si_up,Si_down
 
     def _get_naive_estimator(self):
         """For testing."""
@@ -188,7 +221,7 @@ class IntereventTimeEstimator(object):
                     self.add_censored(self.endTime-last)
     """
 
-    def get_estimator(self):
+    def get_estimator(self,variance=False):
         if self.mode=='periodic':
             censored_times=None
             event_times=self.observed_iets
@@ -204,7 +237,7 @@ class IntereventTimeEstimator(object):
                 event_times[key]=event_times[key]*2
 
         km_estimator=KaplanMeierEstimator(censored_times=censored_times,event_times=event_times)
-        return km_estimator.get_estimator()
+        return km_estimator.get_estimator(variance=variance)
 
     def get_naive_estimator(self):
         km_estimator=KaplanMeierEstimator(event_times=self.observed_iets)
@@ -683,7 +716,7 @@ if __name__=="__main__":
         print ": ",
         print iet_est.get_naive_estimator(),
         print ", ",
-        print iet_est.get_estimator()
+        print iet_est.get_estimator(variance=True)
 
     iet_est=IntereventTimeEstimator(12,mode='censorall')
     iet_est.add_time_seq([3,4,5,9])
