@@ -1,5 +1,6 @@
 import scipy.stats
 import scipy.optimize
+from scipy.special import binom
 import random
 import math
 import itertools
@@ -395,7 +396,7 @@ class IntereventTimeEstimator(object):
                     return ts,cump
 
 
-    def estimate_moment(self,moment,method="naive"):
+    def estimate_moment(self,moment,method="naive",central=False):
         """Returns an estimate for a moment of the inter-event time distribution.
 
         Choose one of the following methods.
@@ -405,45 +406,69 @@ class IntereventTimeEstimator(object):
         of empty time sequences.
         """ 
         s,n=0,0
+        if central:
+            u=self.estimate_moment(1,method=method,central=False)
+        else:
+            u=0.0
         if method=="naive":
             for iet,num in self.observed_iets.iteritems():
-                s+=num*(iet**moment)
+                s+=num*((iet-u)**moment)
                 n+=num
             if n!=0:
-                return s/float(n)
+                if central:
+                    if n>1:
+                        return s/float(n-1)
+                    else:
+                        return None
+                else:
+                    return s/float(n)
             else:
                 return None
         elif method=="lowerbound":
             assert self.mode in ["censorall","censorlast"]
             mult=2 if self.mode == "censorall" else 1
             for iet,num in self.observed_iets.iteritems():
-                s+=mult*num*(iet**moment)
+                s+=mult*num*((iet-u)**moment)
                 n+=mult*num
             for iet,num in itertools.chain(self.forward_censored_iets.iteritems(),self.backward_censored_iets.iteritems()):
-                s+=num*(iet**moment)
+                s+=num*((iet-u)**moment)
                 n+=num
-            s+=self.empty_seqs*(self.endTime**moment)
+            s+=self.empty_seqs*((self.endTime-u)**moment)
             n+=self.empty_seqs
-            return s/float(n)
+            if central:
+                if n>1:
+                    return s/float(n-1)
+                else:
+                    return None
+            else:
+                return s/float(n)
         elif method=="lbias":
             for iet,num in self.observed_iets.iteritems():
-                s+=num/(1-iet/float(self.endTime))*(iet**moment)
+                s+=num/(1-iet/float(self.endTime))*((iet-u)**moment)
                 n+=num/(1-iet/float(self.endTime))
             if n!=0:
-                return s/float(n)
+                if central:
+                    if n>1:
+                        return s/float(n-1)
+                    else:
+                        return None
+                else:
+                    return s/float(n)
             else:
                 return None
         elif method=="lbias_lbound":
+            if central:
+                raise Exception("Not implemented.")
             s2,n2=0,0
             assert self.mode in ["censorall","censorlast"]
             mult=2 if self.mode == "censorall" else 1
             for iet,num in self.observed_iets.iteritems():
-                s+=2*num/(1-iet/float(self.endTime))*(iet**moment)
+                s+=2*num/(1-iet/float(self.endTime))*((iet-u)**moment)
                 n+=2*num/(1-iet/float(self.endTime))
             for iet,num in itertools.chain(self.forward_censored_iets.iteritems(),self.backward_censored_iets.iteritems()):
-                s2+=num*(iet**moment)
+                s2+=num*((iet-u)**moment)
                 n2+=num
-            s2+=self.empty_seqs*(self.endTime**moment)
+            s2+=self.empty_seqs*((self.endTime-u)**moment)
             n2+=self.empty_seqs
             if n!=0:
                 lbias= s/float(n)
@@ -455,12 +480,16 @@ class IntereventTimeEstimator(object):
             p_lbound=n2/float(n+n2)
             return lbias*p_lbias+lbound*p_lbound
         elif method=="poisson":
+            if central:
+                raise Exception("Not implemented.")
             if len(self.observed_iets)!=0:
                 rate=len(self.observed_iets)/float(self.endTime*self.nseqs)
             else:
                 rate=1./float(self.endTime*self.nseqs)
             return math.factorial(moment)/float(rate**moment)
         elif method=="npmle":
+            if central:
+                raise Exception("Not implemented.")
             if len(self.observed_iets)!=0:
                 ts,ps=self.get_npmle_estimator()
                 cd=dists.CumDist(ts,ps,maxval=self.endTime)
@@ -468,6 +497,8 @@ class IntereventTimeEstimator(object):
             else:
                 return self.endTime
         elif method=="npmle_mod":
+            if central:
+                raise Exception("Not implemented.")
             if len(self.observed_iets)>1:
                 ts,ps=self.get_npmle_estimator()
                 cd=dists.CumDist(ts,ps,maxval=ts[-1])
@@ -478,13 +509,19 @@ class IntereventTimeEstimator(object):
             elif len(self.observed_iets)==1:
                 return None #(self.endTime/2.)**moment
         elif method=="km":
+            if central:
+                raise Exception("Not implemented.")
+
             if len(self.observed_iets)!=0:
                 ts,ps=self.get_estimator()
-                cd=dists.CumDist(ts,ps,maxval=self.endTime)
+                cd=dists.CumDist(ts,ps,maxval=ts[-1])
                 return cd.get_moment(moment)
             else:
                 return self.endTime
         elif method=="km_mod":
+            if central:
+                raise Exception("Not implemented.")
+
             niets=sum(self.observed_iets.itervalues())
             if niets>1 :
                 ts,ps=self.get_estimator()
@@ -499,6 +536,32 @@ class IntereventTimeEstimator(object):
         else:
             raise Exception("Invalid parameter value for 'method': "+method)
 
+    def estimate_moment_number_of_data_points(self,method):
+        """Returns the number of data points used by the estimator specified in the parameter 'method'.
+
+        This function is useful when constructing new estimators based on moments. For example, the
+        sample variance 's' can be calculated by the following code:
+
+        >>> m1=est.estimate_moment(1,method="naive")
+        >>> m2=est.estimate_moment(1,method="naive")
+        >>> n=est.estimate_moment_number_of_data_points("naive")
+        >>> s=n/float(n-1)*(m2-m1**2)
+        """
+        if method=="naive":
+            n=0
+            for iet,num in self.observed_iets.iteritems():
+                    n+=num
+            return n
+        elif method=="lowerbound":
+            n=0
+            for iet,num in self.observed_iets.iteritems():
+                n+=num
+            for iet,num in itertools.chain(self.forward_censored_iets.iteritems(),self.backward_censored_iets.iteritems()):
+                n+=num
+            n+=self.empty_seqs
+            return n
+        else:
+            raise Exception("Invalid parameter value for 'method': "+method)
 
 def edgestotimeseqs(edges, issorted=True):
     """Generator transforming edges to time sequences.
@@ -689,6 +752,63 @@ def get_burstiness(m1,m2):
     else:
         s=math.sqrt(m2-m1*m1)
     return (s-m1)/float(s+m1)
+
+def get_central_moment(n,moments=[]):
+    un=0
+    for j in range(0,n+1):
+        un+=binom(n,j)*(-1)**(n-j)*moments[j-1]*moments[0]**(n-j)
+    return un
+
+def get_burstiness_less_biased(m1,m2,n,normalcorrection=True,u2=None,u3=None,u4=None,u5=None,u6=None):
+    """If all central moments are given solve equation (2) in:
+    'Signigicance tests for coefficients of variation and variability profile', Sokal & Braumann (1980)
+    """
+    if m1==0:
+        return None
+    if abs(m2-m1*m1)<max(m2,m1*m1)/10**6:
+        s=0
+        return -1
+    else:
+        if u2==None:
+            s=math.sqrt(float(n)/float(n-1)*(m2-m1*m1))
+        else:
+            s=math.sqrt(u2)
+
+    if normalcorrection and u3==None:
+        cv=(1+1./float(4*n))*s/float(m1)
+        #elif m3!=None and m4==None:
+        #thetahat=s**2/float(m1**2)
+        #gamma=(m3-3*m2*m1+2*m1**3)/float(s**3)
+        #thetadilde=thetahat-(thetahat**(3./2.))/float(n)*(3*thetahat**(0.5)-2*gamma)
+        #cv=math.sqrt(thetadilde)
+    elif u2!=None and u3!=None and u4!=None and u5!=None and u6!=None:
+        vp=s/float(m1)
+        gamma1=u3/float(s**3)
+        gamma2=u4/float(s**4)
+
+        correction1=(1-1./float(4*(n-1)) +vp**2/n - vp*gamma1/float(2*n) - gamma2/float(8*n)) 
+        correction2=1./float(2*(n-1)**2) - (3*n-5)/float(4*n**2*(n-1))*vp*gamma1 - 3*(n-5)/float(16*n**2*(n-1))*gamma2 + 1./float(8*n**2)*vp*u5/(u2**2.5) + 1./float(16*n**2)*(u6/float(u2**3)-15) - 1./float(n**2) * vp**3 *gamma1 - (3*n**2 - 6*n +5)/float(8*n**2*(n-1)**2)*gamma1**2 + 1./float(2*n**2)*vp**2*gamma2
+        cv=vp/float(correction1+correction2)
+
+        target=s/float(m1) 
+        ev=lambda vp:vp*(1-1./float(4*(n-1)) +vp**2/n - vp*gamma1/float(2*n) - gamma2/float(8*n)+1./float(2*(n-1)**2) - (3*n-5)/float(4*n**2*(n-1))*vp*gamma1 - 3*(n-5)/float(16*n**2*(n-1))*gamma2 + 1./float(8*n**2)*vp*u5/(u2**2.5) + 1./float(16*n**2)*(u6/float(u2**3)-15) - 1./float(n**2) * vp**3 *gamma1 - (3*n**2 - 6*n +5)/float(8*n**2*(n-1)**2)*gamma1**2 + 1./float(2*n**2)*vp**2*gamma2)-target
+
+        evp=lambda vp:1-1./float(4*(n-1)) +3*vp**2/n - 2*vp*gamma1/float(2*n) - gamma2/float(8*n)+1./float(2*(n-1)**2) - 2*(3*n-5)/float(4*n**2*(n-1))*vp*gamma1 - 3*(n-5)/float(16*n**2*(n-1))*gamma2 + 2*1./float(8*n**2)*vp*u5/(u2**2.5) + 1./float(16*n**2)*(u6/float(u2**3)-15) - 4*1./float(n**2) * vp**3 *gamma1 - (3*n**2 - 6*n +5)/float(8*n**2*(n-1)**2)*gamma1**2 + 3*1./float(2*n**2)*vp**2*gamma2
+        evpp=lambda vp: 6*vp/n - 2*gamma1/float(2*n) - 2*(3*n-5)/float(4*n**2*(n-1))*gamma1 + 2*1./float(8*n**2)*u5/(u2**2.5)  - 12*1./float(n**2) * vp**2 *gamma1  + 6*1./float(2*n**2)*vp*gamma2
+
+        try:
+            cv=scipy.optimize.newton(ev,target)
+        except RuntimeError:
+            cv=scipy.optimize.newton(evp,target)
+            assert evpp(cv)<0
+            #from matplotlib import pyplot as plt
+            #t=lambda x:ev(x/1000.)
+            #plt.plot(map(lambda x:x/1000.,range(10000)),map(t,range(10000)))
+            #raise Exception()
+    else:
+        cv=s/float(m1)        
+
+    return float(cv-1)/float(cv+1)
 
 
 if __name__=="__main__":
