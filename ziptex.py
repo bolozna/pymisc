@@ -45,7 +45,9 @@ figs=set()
 bibfiles=set()
 texfiles=[]
 while len(unparsedFiles)>0:
-    filename=unparsedFiles.pop()+".tex"
+    filename=unparsedFiles.pop()
+    if ".tex" not in filename:
+        filename=filename+".tex"
     print "Reading file: "+filename
     texfiles.append(filename)
     parseTex(filename,figs,bibfiles,unparsedFiles)
