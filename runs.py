@@ -8,8 +8,13 @@ def write_results(results,resultfilename):
     """
     resultfile=open(resultfilename,"a")
     fcntl.flock(resultfile, fcntl.LOCK_EX)
-    for result in results:
-        resultfile.write(result)
+
+    if isinstance(results,str):
+        resultfile.write(results)
+    elif isinstance(results,list):
+        for result in results:
+            resultfile.write(result)
+
     fcntl.flock(resultfile, fcntl.LOCK_UN)
     resultfile.close()
 
