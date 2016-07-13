@@ -1,7 +1,7 @@
 """Module for helping running simulations.
 """
 import fcntl
-
+import numpy
 
 def write_results(results,resultfilename):
     """Safe way of writing results to a file that are used by many processes.
