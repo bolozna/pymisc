@@ -26,7 +26,7 @@ def parse_number(inputstr):
         ilist=[float(inputstr)]
     except ValueError:
         if inputstr.startswith("linspace(") and inputstr[-1]==")":
-            inputstr=inputstr.strip("linspace(").strip(")")
+            inputstr=inputstr.strip("linspace[").strip("]")
             vals=map(float,inputstr.split(","))
             ilist=numpy.linspace(vals[0],vals[1],int(vals[2]))
         elif inputstr.startswith("[") and inputstr[-1]=="]":
