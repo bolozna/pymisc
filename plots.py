@@ -72,6 +72,21 @@ def remove_axis(ax):
     ax.get_yaxis().tick_left()
 
 
+def plot_vector_field(xs,ys,f,alen=None):
+    from matplotlib import pyplot as plt
+    import numpy
+    fx,fy=numpy.zeros((len(xs),len(ys))),numpy.zeros((len(xs),len(ys)))
+    for i,x in enumerate(xs):
+        for j,y in enumerate(ys):
+            ff=f(x,y)
+            if alen!=None:
+                lf=math.sqrt(ff[0]**2+ff[1]**2)/alen
+                ff=(ff[0]/lf,ff[1]/lf)
+
+            fx[j,i]=ff[0]
+            fy[j,i]=ff[1]
+
+    plt.quiver(xs,ys,fx,fy)
 
 colors_soft=["#7ac36a","#5a9bd4","#faa75b","#9e67ab","#737373","#f15a60","#ce7058","#d77fb4"]
 colors_bright=["#008c48","#185aa9","#f47d23","#662c91","#010202","#ee2e2f","#a21d21","#b43894"]
